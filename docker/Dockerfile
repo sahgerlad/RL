@@ -44,6 +44,8 @@ EOF
 ARG UV_VERSION=0.9.7
 ARG PYTHON_VERSION=3.12
 ENV PATH="/root/.local/bin:$PATH"
+ENV TORCH_CUDA_ARCH_LIST="9.0 10.0"
+ENV TRITON_PTXAS_PATH=/usr/local/cuda/bin/ptxas
 RUN curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh && \
     uv python install ${PYTHON_VERSION}
 
@@ -127,6 +129,7 @@ COPY --from=nemo-rl . /opt/nemo-rl
 # so do a quick check before trying to unshallow.
 RUN git rev-parse --is-shallow-repository | grep -q true && git fetch --unshallow || true
 RUN UV_LINK_MODE=symlink uv run nemo_rl/utils/prefetch_venvs.py
+RUN find /opt/ray_venvs /opt/nemo_rl_venv -name "ptxas-blackwell" -exec ln -sf /usr/local/cuda/bin/ptxas {} \;
 # NOTICES.txt file points to where the OSS source code is archived
 RUN echo "This distribution includes open source which is archived at the following URL: https://opensource.nvidia.com/oss/teams/nvidia/nemo-rl/${RC_DATE}:linux-${TARGETARCH}/index.html" > NOTICES.txt && \
     echo "For further inquiries or assistance, contact us at oss-requests@nvidia.com" >> NOTICES.txt
