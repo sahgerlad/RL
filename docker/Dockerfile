@@ -49,6 +49,7 @@ EOF
 ARG UV_VERSION=0.9.7
 ARG PYTHON_VERSION=3.12
 ENV PATH="/root/.local/bin:$PATH"
+ENV TRITON_PTXAS_PATH=/usr/local/cuda/bin/ptxas
 RUN curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh && \
     uv python install ${PYTHON_VERSION}
 
@@ -76,8 +77,8 @@ ARG BUILD_CUSTOM_VLLM
 ENV UV_PROJECT_ENVIRONMENT=/opt/nemo_rl_venv
 ENV UV_LINK_MODE=copy
 
-# Ensure DeepEP is built for H100 and B200 (also mcore inference unified memory API now invokes a torch API that requires these to be set)
-ENV TORCH_CUDA_ARCH_LIST="9.0 10.0"
+# Ensure DeepEP is built for hopper and (grace)blackwell (also mcore inference unified memory API now invokes a torch API that requires these to be set)
+ENV TORCH_CUDA_ARCH_LIST="9.0 10.0 10.3"
 
 # First copy only the dependency files
 COPY --from=nemo-rl pyproject.toml uv.lock ./
@@ -138,7 +139,21 @@ COPY --from=nemo-rl --exclude=pyproject.toml --exclude=uv.lock . /opt/nemo-rl
 # Potentially not necessary if the repo is passed in as a complete repository (w/ full git history),
 # so do a quick check before trying to unshallow.
 RUN git rev-parse --is-shallow-repository | grep -q true && git fetch --unshallow || true
-RUN UV_LINK_MODE=symlink uv run nemo_rl/utils/prefetch_venvs.py
+RUN <<"EOF" bash -exu
+NEGATIVE_FILTERS=""
+if [[ -n "${SKIP_VLLM_BUILD:-}" ]]; then
+    NEGATIVE_FILTERS="$NEGATIVE_FILTERS vllm"
+fi
+if [[ -n "${SKIP_SGLANG_BUILD:-}" ]]; then
+    NEGATIVE_FILTERS="$NEGATIVE_FILTERS sglang"
+fi
+if [[ -n "$NEGATIVE_FILTERS" ]]; then
+    UV_LINK_MODE=symlink uv run nemo_rl/utils/prefetch_venvs.py --negative-filters $NEGATIVE_FILTERS
+else
+    UV_LINK_MODE=symlink uv run nemo_rl/utils/prefetch_venvs.py
+fi
+EOF
+RUN find /opt/ray_venvs /opt/nemo_rl_venv -name "ptxas-blackwell" -exec ln -sf /usr/local/cuda/bin/ptxas {} \;
 
 # Generate container fingerprint for frozen environment support
 # Store outside /opt/nemo-rl to avoid being overwritten by user mounts
