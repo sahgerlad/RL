@@ -65,6 +65,9 @@ def create_megatron_test_config(
     converter_type: str = "LlamaForCausalLM",
     logprob_chunk_size: Optional[int] = None,
     defer_fp32_logits: Optional[bool] = None,
+    attention_backend: Optional[str] = None,
+    enable_cuda_graph: Optional[bool] = None,
+    cuda_graph_scope: Optional[str] = None,
 ) -> PolicyConfig:
     """Create a test config for Megatron policy worker."""
     return {
@@ -175,6 +178,9 @@ def create_megatron_test_config(
                 "fp8_recipe": "tensorwise",
                 "fp8_param": True,
             },
+            "attention_backend": attention_backend,
+            **({"enable_cuda_graph": enable_cuda_graph} if enable_cuda_graph is not None else {}),
+            **({"cuda_graph_scope": cuda_graph_scope} if cuda_graph_scope is not None else {}),
         },
         "optimizer": None,  # Remove default FSDP optimizer
         "scheduler": None,  # Remove default scheduler
@@ -311,6 +317,10 @@ def training_setup(request):
                 config["megatron_cfg"]["sequence_parallel"] = config_updates[
                     "sequence_parallel"
                 ]
+            if "attention_backend" in config_updates:
+                config["megatron_cfg"]["attention_backend"] = config_updates[
+                    "attention_backend"
+                ]
 
         tokenizer = get_tokenizer(config["tokenizer"])
         config["generation"] = configure_generation_config(
@@ -380,6 +390,7 @@ def training_setup(request):
         ),
         (2, 2, 1, "tiny_llama_model_path", {"sequence_parallel": True}),
         (2, 2, 1, "tiny_llama_model_path", {"precision": "bfloat16", "fp8": "hybrid"}),
+        (2, 1, 1, "tiny_llama_model_path", {"attention_backend": "flash"}),
     ],
     indirect=True,
     ids=[
@@ -391,6 +402,7 @@ def training_setup(request):
         "2gpu_dp2_llama_ac",
         "2gpu_tp2_llama_sp",
         "2gpu_tp2_llama_fp8",
+        "2gpu_dp2_llama_attention_backend_flash",
     ],
 )
 def test_megatron_policy_training(training_setup):
@@ -2588,3 +2600,33 @@ def test_megatron_policy_flops_range_check(tiny_llama_model_path):
     finally:
         policy.shutdown()
         cluster.shutdown()
+
+
+def test_cuda_graph_config_parsing():
+    """Test CUDA graph configuration options are properly included in test configs."""
+    config_default = create_megatron_test_config(
+        model_name="test-model",
+    )
+    assert "enable_cuda_graph" not in config_default["megatron_cfg"]
+    assert "cuda_graph_scope" not in config_default["megatron_cfg"]
+
+    config_enabled = create_megatron_test_config(
+        model_name="test-model",
+        enable_cuda_graph=True,
+    )
+    assert config_enabled["megatron_cfg"]["enable_cuda_graph"] is True
+    assert "cuda_graph_scope" not in config_enabled["megatron_cfg"]
+
+    config_with_scope = create_megatron_test_config(
+        model_name="test-model",
+        enable_cuda_graph=True,
+        cuda_graph_scope="full_model",
+    )
+    assert config_with_scope["megatron_cfg"]["enable_cuda_graph"] is True
+    assert config_with_scope["megatron_cfg"]["cuda_graph_scope"] == "full_model"
+
+    config_disabled = create_megatron_test_config(
+        model_name="test-model",
+        enable_cuda_graph=False,
+    )
+    assert config_disabled["megatron_cfg"]["enable_cuda_graph"] is False
